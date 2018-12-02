@@ -1,14 +1,11 @@
 import mongoose, { Schema } from 'mongoose'
 import _ from 'lodash'
 
-import { ElectionConfig } from '../../api/electionConfig';
 import { switchcaseF } from '../common'
 
 var AccountPoolSchema = new Schema({
   id: { type: Number, required: true, unique: true },
   address: { type: String },
-  network: { type: String, required: true, uppercase: true, enum: ['RINKEBY', 'ROPSTEN', 'KOVAN', 'PRIVATE'] },
-  private_network_id: { type: String },
   ether_amount: { type: Number, default: 0.0 },
   transactionCount: { type: Number, default: 0 },
   inUse: { type: Boolean, default: false },

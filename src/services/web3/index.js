@@ -2,7 +2,8 @@ import signale from 'signale';
 import _ from 'lodash';
 import Web3 from 'web3';
 
-import { getNextAccount, returnAccount, getEthMainAccountPvtKey } from '../accountPool';
+import { toPromise } from '../response';
+import { getNextAccount, returnAccount } from '../accountPool';
 import CONFIG_SETTINGS from '../../config';
 
 var web3 = new Web3();
@@ -11,8 +12,8 @@ const providerAccessToken = CONFIG_SETTINGS.NETWORK.ACCESS_TOKEN;
 var mainEthAccount;
 
 
-const sendEtherToAccount = async (_network, _formAddressPvtKey, _toAddress, _value) => {
-  let providerURL = _.get(CONFIG_SETTINGS, `NETWORK.${_network.toUpperCase()}.URL`) + providerAccessToken;
+const sendEtherToAccount = async (_formAddressPvtKey, _toAddress, _value) => {
+  let providerURL = _.get(CONFIG_SETTINGS, `NETWORK.RINKEBY.URL`) + providerAccessToken;
   await setupEthConnection(providerURL, _formAddressPvtKey);
 
   let amount = await web3.utils.toWei(_value.toString(), 'finney');
@@ -30,8 +31,8 @@ const sendEtherToAccount = async (_network, _formAddressPvtKey, _toAddress, _val
     });
 }
 
-const getAccountBalance = async (_network, _accountAddress) => {
-  let providerURL = _.get(CONFIG_SETTINGS, `NETWORK.${_network.toUpperCase()}.URL`) + providerAccessToken;
+const getAccountBalance = async (_accountAddress) => {
+  let providerURL = _.get(CONFIG_SETTINGS, `NETWORK.RINKEBY.URL`) + providerAccessToken;
   await setProvider(providerURL);
 
   signale.info('getting wei balance...');
@@ -129,10 +130,6 @@ const decryptAccount = async (encryptedPrivateKey) => {
 const sendEthSmartContractTransaction = async (provider, pvtKey, abi, bytecode, contractArgs) => {
   let deployContractObj, gasLimit, transactionHash, receipt
 
-  signale.info('setting web3 provider...')
-  await setProvider(provider)
-
-  signale.info('setting web3 eth account...')
   await setupEthConnection(provider, pvtKey);
 
   signale.info('Creating new contract instance.....')
@@ -238,30 +235,33 @@ const invokeContractMethodTransaction = async (provider, accAddress, pvtKey, abi
 /**
  * Deploy Smart Contract
  *
- * @param      {string}  network       The network provider
  * @param      {string}  contractName  The contract name
  * @param      {array}   contractArgs  The contract arguments
  * @return     {object}  deployed contract receipt
  */
-const deploySmartContract = async (_electionObj, _contractName, _contractArgs) => {
-  let providerURL = _.get(CONFIG_SETTINGS, `NETWORK.${_electionObj.network.toUpperCase()}.URL`) + providerAccessToken;
+const deploySmartContract = async (_contractName, _contractArgs) => {
+  let providerURL = _.get(CONFIG_SETTINGS, `NETWORK.RINKEBY.URL`) + providerAccessToken;
 
-  // let specificAccountPvtKey = _.get(CONFIG_SETTINGS, `NETWORK.${_network.toUpperCase()}.ACCOUNT_PVT_KEY`);
-  let specificAccount = await getNextAccount(_network);
+  signale.info("getting free eth account...")
+  let [ errAccPool, specificAccount ] = await toPromise(getNextAccount());
+  if (errAccPool) throw new Error("No eth account found.");
+
   specificAccount.pvtKey = specificAccount.privateKey;
-  // let specificAccountPvtKey = await getEthMainAccountPvtKey(_electionObj.network, _electionObj.account_selection, _electionObj.id);
   let contractBytecode = _.get(CONFIG_SETTINGS, `CONTRACTS.${_contractName.toUpperCase()}.BYTECODE`);
   let contractABI = _.get(CONFIG_SETTINGS, `CONTRACTS.${_contractName.toUpperCase()}.ABI`);
 
   signale.info(`providerURL - ${providerURL}
                 specificAccountPvtKey - ${_.truncate(specificAccount.pvtKey, {'length': 6})}
-                contractBytecode - ${contractBytecode}
+                contractBytecode - ${_.truncate(contractBytecode, {'length': 15})}
                 contractABI - ${contractABI}
-                network - ${_electionObj.network}
                 contractName - ${_contractName}
                 contractArgs - ${_contractArgs}`)
 
   let contractReceipt = await sendEthSmartContractTransaction(providerURL, specificAccount.pvtKey, contractABI, contractBytecode, _contractArgs);
+
+  let usedEther = await web3.utils.fromWei(contractReceipt.gasUsed.toString(), 'ether');
+  signale.info("returning eth account...")
+  returnAccount(specificAccount, usedEther);
 
   return contractReceipt;
 }
@@ -269,17 +269,16 @@ const deploySmartContract = async (_electionObj, _contractName, _contractArgs) =
 /**
  * Contract method call
  *
- * @param      {string}  network           The network provider
  * @param      {string}  _contractName     The contract name
  * @param      {string}  _contractAddress  The contract address
  * @param      {number}  _methodName       The method name
  * @param      {array}   _methodArgs       The method arguments
  * @return     {object}  method response
  */
-const contractMethodCall = async (_electionObj, _contractName, _contractAddress, _methodName, _methodArgs) => {
-  let providerURL = _.get(CONFIG_SETTINGS, `NETWORK.${_electionObj.network.toUpperCase()}.URL`) + providerAccessToken;
+const contractMethodCall = async (_contractName, _contractAddress, _methodName, _methodArgs) => {
+  let providerURL = _.get(CONFIG_SETTINGS, `NETWORK.RINKEBY.URL`) + providerAccessToken;
 
-  let specificAccountPvtKey = await getEthMainAccountPvtKey(_electionObj.network, _electionObj.account_selection, _electionObj.id);
+  let specificAccountPvtKey = _.get(CONFIG_SETTINGS, `NETWORK.RINKEBY.ACCOUNT_PVT_KEY`);
   let contractABI = _.get(CONFIG_SETTINGS, `CONTRACTS.${_contractName.toUpperCase()}.ABI`);
 
   signale.info(`providerURL - ${providerURL}
@@ -298,17 +297,19 @@ const contractMethodCall = async (_electionObj, _contractName, _contractAddress,
 /**
  * Contract method transaction
  *
- * @param      {string}  network           The network provider
  * @param      {string}  _contractName     The contract name
  * @param      {string}  _contractAddress  The contract address
  * @param      {number}  _methodName       The method name
  * @param      {array}   _methodArgs       The method arguments
  * @return     {object}  method response
  */
-const contractMethodTransaction = async (_network, _contractName, _contractAddress, _methodName, _methodArgs) => {
-  let providerURL = _.get(CONFIG_SETTINGS, `NETWORK.${_network.toUpperCase()}.URL`) + providerAccessToken;
+const contractMethodTransaction = async (_contractName, _contractAddress, _methodName, _methodArgs) => {
+  let providerURL = _.get(CONFIG_SETTINGS, `NETWORK.RINKEBY.URL`) + providerAccessToken;
 
-  let specificAccount = await getNextAccount(_network);
+  signale.info("getting free eth account...")
+  let [ errAccPool, specificAccount ] = await toPromise(getNextAccount());
+  if (errAccPool) throw new Error("No eth account found.");
+
   specificAccount.pvtKey = specificAccount.privateKey;
 
   let contractABI = _.get(CONFIG_SETTINGS, `CONTRACTS.${_contractName.toUpperCase()}.ABI`);
@@ -325,15 +326,16 @@ const contractMethodTransaction = async (_network, _contractName, _contractAddre
   let methodResponse = await invokeContractMethodTransaction(providerURL, specificAccount.address, specificAccount.pvtKey, contractABI, _contractAddress, _methodName, _methodArgs);
 
   let usedEther = await web3.utils.fromWei(methodResponse.gasUsed.toString(), 'ether');
+  signale.info("returning eth account...")
   returnAccount(specificAccount, usedEther);
 
   return methodResponse
 }
 
 module.exports = {
-  deploySmartContract: deploySmartContract,
-  contractMethodCall: contractMethodCall,
-  contractMethodTransaction: contractMethodTransaction,
-  sendEtherToAccount: sendEtherToAccount,
-  getAccountBalance: getAccountBalance
+  deploySmartContract,
+  contractMethodCall,
+  contractMethodTransaction,
+  sendEtherToAccount,
+  getAccountBalance
 }

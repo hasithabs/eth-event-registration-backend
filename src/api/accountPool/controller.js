@@ -11,7 +11,7 @@ import CONFIG_SETTINGS from '../../config'
 const getAllAccounts = (req, res, next) =>
   Account.find()
     .then(accounts => ({
-      accounts: accounts.map((acc) => acc.view('FULL')),
+      ethAccounts: accounts.map((acc) => acc.view('FULL')),
       count: accounts.length
     }))
     .then(success(res))
